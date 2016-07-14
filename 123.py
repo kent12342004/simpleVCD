@@ -13,12 +13,13 @@ def toggle_count(a, b):
 		else:
 			extend = len(b)-len(a)
 			a = '0'*extend + a
-	c = int(a)^int(b)
-	
+	print "a:%s\nb:%s"%(a,b)
+	#c = int(a)^int(b)
 	Sum = 0
-	for each in str(c):
-		if each == '1':
-			Sum += 1
+	for x,y in zip(a,b):
+		s = int(x)^int(y)
+		if s==1:
+			Sum+=1
 
 	return Sum
 def parse_vcd(vcd_file, start_time, end_time):
@@ -41,13 +42,13 @@ def parse_vcd(vcd_file, start_time, end_time):
 	fh = open(vcd_file, 'r')
 	print "Open File!"
 	print "Start: %s, End: %s"%(start_time, end_time)
+
 	while True:
 		line = fh.readline()
-
 		if line =='':		# EOF
 			break
 		line = line.strip()
-		print line
+
 		if "$date" in line:
 			write_file.append(line)
 		elif "$timescale" in line:
@@ -67,14 +68,11 @@ def parse_vcd(vcd_file, start_time, end_time):
 			write_file.append(line)
 		elif "$scope" in line:
 			write_file.append(line)
-			hier.append(line.split()[2])	# take the name of scope
-			
+			hier.append(line.split()[2])	# take the name of scope	
 		elif "$upscope" in line:
 			write_file.append(line)
 			hier.pop()	# pop the scope
-
 		elif "$var" in line:
-
 			ls = line.split()						# assume all on one line
 			vType = ls[1]				# type		#	$var reg 1 * data $end
 			vSize = ls[2]				# size		#	$var wire 4 ( addr [3:0] $end
@@ -100,7 +98,6 @@ def parse_vcd(vcd_file, start_time, end_time):
 			else:	
 				temp = "$var %s\t  %s %s\t%s  $end"%(vType, vSize, vCode, str(vName))
 			write_file.append(temp)
-			
 		elif line.startswith('#'):
 			re_time_match = re_time.match(line)
 			time = re_time_match.group(1)		# recording #(time)
@@ -108,7 +105,6 @@ def parse_vcd(vcd_file, start_time, end_time):
 				break
 			if time=='0':
 				write_file.append(line)
-
 		elif line.startswith(('0', '1', 'x', 'z', 'b', 'r','X', 'Z')):
 			if line.startswith(('0', '1', 'x', 'z', 'X', 'Z')):
 				t = re_t_val.match(line)
@@ -123,35 +119,27 @@ def parse_vcd(vcd_file, start_time, end_time):
 			value = m.group(1)
 			code = m.group(2)
 			
-			#print "Time: %s"%time
 			if checkVars:
 				write_file.append(line)
-			#else:
-			#	if code in safeList:
-					#print "in SafeList!"
-					#print safeList
 			if (code in data):
-				#print code, time, value
-				
 				if 'tv' not in data[code]:
-					#print "tv not in code"
 					data[code]['tv'] = []
 				if 'index' not in data[code]:
-					#print "index not in code!"
 					data[code]['index'] = -1
 				if 'count' not in data[code]:
-					#print "no count!"
 					data[code]['count'] = 0
 
 				data[code]['tv'].append([time, value])
 				data[code]['index'] += 1
 				index = data[code]['index']
-				if int(time)>int(start_time) and index>=1:
+				if int(time)>=int(start_time) and index>=1:
+					print "time:%s, sT:%s"%(time, start_time)
 					a = data[code]['tv'][index][1]
 					b = data[code]['tv'][index-1][1]
-					c = toggle_count(a,b)
+					c = toggle_count(str(a),str(b))
+					if code==')':
+						print "):%s"%c
 					data[code]['count'] += c
-					#print data[code]['count']
 				
 		elif line.startswith("$end"):
 			write_file.append(line)
@@ -166,14 +154,13 @@ def parse_vcd(vcd_file, start_time, end_time):
 		t = 0
 		clk = ""
 		for code in data:
+			print "Code:%s\n%s\n"%(code,data[code])
 			if code in safeList:
 				t = (int(end_time)-int(start_time)+1)/2 + int(start_time)
 				clk = code
 				s = "0%s"%clk
 				write_file.append(s)
 			else:
-				#print code
-				#print data[code]
 				if 'count' in data[code]:
 					binCount = count_length(data[code]['count'])
 					s = "b%s %s"%(binCount, code)
@@ -200,10 +187,6 @@ def main():
 
 	for each in write_file:
 		f.write("%s\n"%each)
-	#for code in vcd:
-		#print "Code: %s\n%s"%(code, vcd[code]['tv'])
-		#print vcd[code]
-	#toggle_count(vcd, start_time, end_time, write_file, order)		# toggle counter
 
 if __name__ == "__main__":
 	main()
