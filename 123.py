@@ -13,8 +13,6 @@ def toggle_count(a, b):
 		else:
 			extend = len(b)-len(a)
 			a = '0'*extend + a
-	print "a:%s\nb:%s"%(a,b)
-	#c = int(a)^int(b)
 	Sum = 0
 	for x,y in zip(a,b):
 		s = int(x)^int(y)
@@ -25,7 +23,7 @@ def toggle_count(a, b):
 def parse_vcd(vcd_file, start_time, end_time):
 	re_time = re.compile(r"^#(\d+)")				# re obj of '#(time)'
 	re_1b_val = re.compile(r"^([01zxZX])(.+)")		# re obj of e.g '0%'
-	re_Nb_val = re.compile(r"^[b|r](\S+)\s+(.+)")	# re obj of e.g 'b0 @', 'b111 #'
+	re_Nb_val = re.compile(r"^[br](\S+)\s+(.+)")	# re obj of e.g 'b0 @', 'b111 #'
 	re_info = re.compile(r"^(\s+\S+)+")			# re obj of e.g '	Jun, ...'
 	re_t_val = re.compile(r"^(\d+)\s+(.+)")
 
@@ -37,7 +35,9 @@ def parse_vcd(vcd_file, start_time, end_time):
 	write_file = [] # write file list
 	checkVars = False
 	startWrite = False
-	safeList = []
+	safeList = []	# clk
+	changeList = []	# extend to 32
+	c = 0
 
 	fh = open(vcd_file, 'r')
 	print "Open File!"
@@ -92,10 +92,14 @@ def parse_vcd(vcd_file, start_time, end_time):
 				}
 				if var_struct not in data[vCode]['nets']:
 					data[vCode]['nets'].append(var_struct)
-			if 'clk' in str(vName):
+			if 'clk' in str(vName) or 'reset' in str(vName):	# save clk and reset
 				temp = "$var %s\t  %s %s\t%s  $end"%(vType, vSize, vCode, vName)
 				safeList.append(vCode)
-			else:	
+			elif str(vSize)!='32':				# change size (not 32bits)
+				changeList.append(vCode)
+				vName = ls[4]+" [31:0]"
+				temp = "$var %s\t  32 %s\t%s  $end"%(vType, vCode, str(vName))
+			else:
 				temp = "$var %s\t  %s %s\t%s  $end"%(vType, vSize, vCode, str(vName))
 			write_file.append(temp)
 		elif line.startswith('#'):
@@ -120,27 +124,30 @@ def parse_vcd(vcd_file, start_time, end_time):
 			code = m.group(2)
 			
 			if checkVars:
-				write_file.append(line)
-			if (code in data):
+				if code in changeList:
+					p = "b"+ value + " " + code
+					write_file.append(p)
+				else:
+					write_file.append(line)
+			if (code in data):					# record time and value (once a time)
 				if 'tv' not in data[code]:
 					data[code]['tv'] = []
 				if 'index' not in data[code]:
 					data[code]['index'] = -1
 				if 'count' not in data[code]:
 					data[code]['count'] = 0
-
-				data[code]['tv'].append([time, value])
-				data[code]['index'] += 1
 				index = data[code]['index']
-				if int(time)>=int(start_time) and index>=1:
-					print "time:%s, sT:%s"%(time, start_time)
-					a = data[code]['tv'][index][1]
-					b = data[code]['tv'][index-1][1]
-					c = toggle_count(str(a),str(b))
-					if code==')':
-						print "):%s"%c
-					data[code]['count'] += c
-				
+				if index>=0:
+					if data[code]['tv'][index][0]==time:
+						data[code]['tv'][index][1] = value
+					else:
+						data[code]['tv'].append([time, value])
+						data[code]['index'] += 1
+						index = data[code]['index']
+				else:
+					data[code]['tv'].append([time,value])
+					data[code]['index'] += 1
+					index = data[code]['index']
 		elif line.startswith("$end"):
 			write_file.append(line)
 			if checkVars:
@@ -149,12 +156,12 @@ def parse_vcd(vcd_file, start_time, end_time):
 		else:
 			s = "\t%s"%line
 			write_file.append(s)
+
 	if startWrite:
 		write_file.append("#%s"%start_time)
 		t = 0
 		clk = ""
 		for code in data:
-			print "Code:%s\n%s\n"%(code,data[code])
 			if code in safeList:
 				t = (int(end_time)-int(start_time)+1)/2 + int(start_time)
 				clk = code
@@ -162,7 +169,15 @@ def parse_vcd(vcd_file, start_time, end_time):
 				write_file.append(s)
 			else:
 				if 'count' in data[code]:
-					binCount = count_length(data[code]['count'])
+					for i in range(len(data[code]['tv'])):			# counter
+						if int(data[code]['tv'][i][0])>=int(start_time)  and i>=1:
+							a = data[code]['tv'][i][1]
+							b = data[code]['tv'][i-1][1]
+							c = toggle_count(str(a),str(b))
+							data[code]['count'] += c
+							if int(data[code]['tv'][i][0])==int(end_time):
+								break
+					binCount = count_length(data[code]['count'])	# invert count to binary type
 					s = "b%s %s"%(binCount, code)
 					write_file.append(s)
 		s = "#%s"%str(t)
