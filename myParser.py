@@ -191,12 +191,16 @@ def parse_vcd(vcd_file, start_time, end_time):
 						if int(data[code]['tv'][i][0])>=int(start_time)  and i>=1:
 							#print code
 							#print 'now:%s'%data[code]['tv'][i-1]
+							#print data[code]['tv'][i]
 							a = data[code]['tv'][i][1]
 							b = data[code]['tv'][i-1][1]
-							c = toggle_count(str(a),str(b))
-							data[code]['count'] += c
-							if int(data[code]['tv'][i][0])==int(end_time):
-								break
+							if str(a)=="x" or str(b)=="x":
+								print "discard!"
+							else:
+								c = toggle_count(str(a),str(b))
+								data[code]['count'] += c
+								if int(data[code]['tv'][i][0])==int(end_time):
+									break
 					binCount = count_length(data[code]['count'])	# invert count to binary type
 					s = "b%s %s"%(binCount, code)
 					write_file.append(s)
