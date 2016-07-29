@@ -247,9 +247,6 @@ def parse_vcd(vcd_file, start_time, end_time):
 				if 'count' in data[code]:
 					for i in range(len(data[code]['tv'])):			# counter
 						if int(data[code]['tv'][i][0])>=int(start_time)  and i>=1:
-							#print code
-							#print 'now:%s'%data[code]['tv'][i-1]
-							#print data[code]['tv'][i]
 							a = data[code]['tv'][i][1]
 							b = data[code]['tv'][i-1][1]
 							if str(a)!="x" and str(b)!="x":
@@ -291,6 +288,7 @@ def parse_vcd(vcd_file, start_time, end_time):
 							write_file.insert(idx+1, string)
 	
 		'''
+		# signals renaming
 		i = 0
 		while(i<len(write_file)):
 			statement = write_file[i]
@@ -301,13 +299,29 @@ def parse_vcd(vcd_file, start_time, end_time):
 				#print code
 				size = getActSize(int(data[code]['nets'][0]['size']))
 				count = int(data[code]['count'])
-				if int(count)>int(size):
+				if data[code]['nets'][0]['length']!='1':
+					R = data[code]['nets'][0]['length']
+					L = re_len.match(R)
+					a = L.group()
+					a = a.replace('[','')
+					a = a.replace(']','')
+					b = a.split(':')
+					startBit = b[1]
+					endBit = b[0]
+				else:
+					startBit = '0'
+					endBit = '1'
+				if int(count)>int(size) or startBit!='0':
 					newCode = getNewCode(data)
 					data[newCode] = {'count':0, 'size':0}
-					write_file[i] = '$var %s\t  %s %s\t%s  $end'%(l[1],l[2],newCode,l[4])
+					if data[code]['nets'][0]['length']!='1':
+						write_file[i] = '$var %s\t  %s %s\t%s [%s:%s]  $end'%(l[1],l[2],newCode,l[4],endBit,startBit)
+					else:
+						write_file[i] = '$var %s\t  %s %s\t%s  $end'%(l[1],l[2],newCode,l[4])
 					newType = data[code]['nets'][0]['type']
 					newSize = data[code]['nets'][0]['size']
 					#print data[code]['nets'][0]['length']
+					'''
 					if data[code]['nets'][0]['length'] != '1':
 						newRange = data[code]['nets'][0]['length']
 						newLength = re_len.match(newRange)
@@ -317,9 +331,8 @@ def parse_vcd(vcd_file, start_time, end_time):
 						b = a.split(':')
 						startBit = b[1]
 						endBit = b[0]
-						newName = data[code]['nets'][0]['shortName'] + '_%s__%s'%(endBit, startBit) + ' [%s:%s]'%(str(int(startBit)+32), startBit)
-					else:
-						newName = data[code]['nets'][0]['shortName'] + '_1__0 [31:0]'
+					'''
+					newName = data[code]['nets'][0]['shortName'] + '_%s__%s'%(endBit, startBit) + ' [31:0]'
 					string = '$var %s\t  32 %s\t%s  $end'%(newType, code, newName)
 					data[code]['replace'] = True
 					write_file.insert(i+1,string)
@@ -334,6 +347,8 @@ def parse_vcd(vcd_file, start_time, end_time):
 				
 				
 			i = i + 1
+
+	# compare testbench
 	'''
 	test = open(csv, 'r')
 	while True:
@@ -355,9 +370,10 @@ def parse_vcd(vcd_file, start_time, end_time):
 
 def main():
 	vcd_file, start_time, end_time = sys.argv[1], sys.argv[2], sys.argv[3]
-	#csv = sys.argv[4]
 
+	#csv = sys.argv[4]
 	#write_file = parse_vcd(vcd_file, start_time, end_time, csv)
+
 	vcd, write_file = parse_vcd(vcd_file, start_time, end_time)		# vcd = record all time's signals
 	#for p in write_file:
 	#	print p
