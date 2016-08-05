@@ -1,10 +1,31 @@
 #!/usr/bin python
 
-import sys, re
+import sys, re, random, argparse
 
-'''
-Convert count to binary format
-'''
+def getActSize(size):
+	Sum = 1
+	size = size-1
+	while size>0:
+		Sum *= 2
+		size -= 1
+	return Sum
+
+def getNewCode(data):
+
+	newCode = ''
+	exist = 0
+	compare = 0
+	asciiString = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+	while True:
+		newCode += random.choice(asciiString)
+		if newCode in data.keys():
+			exist += 1
+		compare += 1
+		if compare>exist: 
+			break
+	data.update({newCode:{}})
+	return newCode
+
 def count_length(l):
 	return str(bin(l)[2:])
 
@@ -31,12 +52,15 @@ def toggle_count(a, b):
 		if s==1:
 			Sum+=1
 	return Sum
+
 def parse_vcd(vcd_file, start_time, end_time):
 	re_time = re.compile(r"^#(\d+)")				# re obj of '#(time)'
 	re_1b_val = re.compile(r"^([01zxZX])(.+)")		# re obj of e.g '0%'
 	re_Nb_val = re.compile(r"^[br](\S+)\s+(.+)")	# re obj of e.g 'b0 @', 'b111 #'
 	re_info = re.compile(r"^(\s+\S+)+")			# re obj of e.g '	Jun, ...'
 	re_t_val = re.compile(r"^(\d+)\s+(.+)")
+	re_init = re.compile(r"^[zxZX](.+)")
+	re_len = re.compile("^\[\d+\:\d+\]")
 
 	data = {}		# var structure values
 	hier = []		# scope hierachy
@@ -49,7 +73,8 @@ def parse_vcd(vcd_file, start_time, end_time):
 	safeList = []	# store clk
 	changeList = []	# extend to 32
 	c = 0
-
+	sortDict = {}
+	
 	fh = open(vcd_file, 'r')
 	print "Open File!"
 	print "Start: %s, End: %s"%(start_time, end_time)
@@ -89,29 +114,32 @@ def parse_vcd(vcd_file, start_time, end_time):
 			vSize = ls[2]				# size		#	$var wire 4 ( addr [3:0] $end
 			vCode = ls[3]				# code
 			vName = " ".join(ls[4:-1])	# name
-			vPath = '.'.join(hier)
-			vFullName = vPath + vName
+			vName_2 = "".join(ls[4:-1])
+			if ls[5] != '$end':
+				vLength = ''.join(ls[5:-1])
+			else:
+				vLength = '1'
+			shortName = ls[4]
+			vPath = '/'.join(hier)
+			vFullName = vPath + '/' + vName_2
 			if vCode not in data:
 				data[vCode] = {}
 				if 'nets' not in data[vCode]:
 					data[vCode]['nets'] = []
 				var_struct = {
 					'type': vType,
+					'shortName': shortName,
+					'length': vLength,
 					'name': vName,
 					'size': vSize,
 					'hier': vPath,
+					'FullName' : vFullName,
 				}
 				if var_struct not in data[vCode]['nets']:
 					data[vCode]['nets'].append(var_struct)
 			if 'clk' in str(vName) or 'reset' in str(vName):	# save clk and reset
-				temp = "$var %s\t  %s %s\t%s  $end"%(vType, vSize, vCode, vName)
 				safeList.append(vCode)
-			elif str(vSize)!='32':				# change size (not 32bits)
-				changeList.append(vCode)
-				vName = ls[4]+" [31:0]"
-				temp = "$var %s\t  32 %s\t%s  $end"%(vType, vCode, str(vName))
-			else:
-				temp = "$var %s\t  %s %s\t%s  $end"%(vType, vSize, vCode, str(vName))
+			temp = "$var %s\t  %s %s\t%s  $end"%(vType, vSize, vCode, str(vName))
 			write_file.append(temp)
 
 		elif line.startswith('#'):
@@ -150,6 +178,7 @@ def parse_vcd(vcd_file, start_time, end_time):
 					data[code]['index'] = -1
 				if 'count' not in data[code]:
 					data[code]['count'] = 0
+				data[code]['replace'] = False
 				index = data[code]['index']
 				if index>=0:
 					if data[code]['tv'][index][0]==time:
@@ -174,13 +203,11 @@ def parse_vcd(vcd_file, start_time, end_time):
 			write_file.append(s)
 
 	if startWrite:
-		#write_file.append("#%s"%start_time)
 		write_file.append("#1")
 		t = 0
 		clk = ""
 		for code in data:
 			if code in safeList:
-				#t = (int(end_time)-int(start_time)+1)/2 + int(start_time)
 				t = (int(end_time)-1+1)/2 + 1
 				clk = code
 				s = "0%s"%clk
@@ -189,14 +216,9 @@ def parse_vcd(vcd_file, start_time, end_time):
 				if 'count' in data[code]:
 					for i in range(len(data[code]['tv'])):			# counter
 						if int(data[code]['tv'][i][0])>=int(start_time)  and i>=1:
-							#print code
-							#print 'now:%s'%data[code]['tv'][i-1]
-							#print data[code]['tv'][i]
 							a = data[code]['tv'][i][1]
 							b = data[code]['tv'][i-1][1]
-							if str(a)=="x" or str(b)=="x":
-								print "discard!"
-							else:
+							if str(a)!="x" and str(b)!="x":
 								c = toggle_count(str(a),str(b))
 								data[code]['count'] += c
 								if int(data[code]['tv'][i][0])==int(end_time):
@@ -204,28 +226,227 @@ def parse_vcd(vcd_file, start_time, end_time):
 					binCount = count_length(data[code]['count'])	# invert count to binary type
 					s = "b%s %s"%(binCount, code)
 					write_file.append(s)
+
 		s = "#%s"%str(t)
 		write_file.append(s)
 		for code in safeList:
 			s = "1%s"%code
 			write_file.append(s)
-			
-		end_time = int(end_time) +1
+		end_time = int(end_time) + 1
 		write_file.append("#%s"%end_time)
+		
+		orig = []
+		orig = write_file
+		ogFile = open('t1_without_rename.vcd','w')
+		for each in orig:
+			st = "%s\n"%each
+			ogFile.write(st)
+		ogFile.close()
+
+		# signals renaming
+		i = 0
+		while(i<len(write_file)):
+			statement = write_file[i]
+			if statement.startswith('$var'):
+				l = statement.split()
+				code = l[3]
+				size = getActSize(int(data[code]['nets'][0]['size']))
+				count = int(data[code]['count'])
+				if data[code]['nets'][0]['length']!='1':
+					R = data[code]['nets'][0]['length']
+					L = re_len.match(R)
+					a = L.group()
+					a = a.replace('[','')
+					a = a.replace(']','')
+					b = a.split(':')
+					startBit = b[1]
+					endBit = b[0]
+				else:
+					startBit = '0'
+					endBit = '1'
+				if int(count)>int(size) or startBit!='0':
+					newCode = getNewCode(data)
+					data[newCode] = {'count':0, 'size':0}
+					if data[code]['nets'][0]['length']!='1':
+						write_file[i] = '$var %s\t  %s %s\t%s [%s:%s]  $end'%(l[1],l[2],newCode,l[4],endBit,startBit)
+					else:
+						write_file[i] = '$var %s\t  %s %s\t%s  $end'%(l[1],l[2],newCode,l[4])
+					newType = data[code]['nets'][0]['type']
+					newSize = data[code]['nets'][0]['size']
+					
+					newName = data[code]['nets'][0]['shortName'] + '_%s__%s'%(endBit, startBit) + ' [31:0]'
+					string = '$var %s\t  32 %s\t%s  $end'%(newType, code, newName)
+					data[code]['replace'] = True
+					write_file.insert(i+1,string)
+					i = i + 1
+			if statement.startswith('x'):
+				rep = re_init.match(statement)
+				copyCode = rep.group(1)
+				if data[copyCode]['replace']:
+					write_file[i] = 'bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx %s'%copyCode
+			i = i + 1
+		
+
 
 	fh.close()
 	return data, write_file
 
+
+
+
+
+def parse_vcd_without_rename(vcd):
+	re_1b_val = re.compile(r"^([01zxZX])(.+)")		# re obj of e.g '0%'
+	re_Nb_val = re.compile(r"^[br](\S+)\s+(.+)")	# re obj of e.g 'b0 @', 'b111 #'
+	data = {}		# var structure values
+	hier = []		# scope hierachy
+	
+	fh = open(vcd, 'r')
+
+	while True:
+		line = fh.readline()
+		if line =='':		# EOF
+			break
+		line = line.strip()	# discard \s of head and tail
+
+		if "$var" in line:
+			ls = line.split()						# assume all on one line
+			vCode = ls[3]				# code
+			vName = " ".join(ls[4:-1])	# name
+			vPath = '/'.join(hier)
+			vFullName = vPath + "/" +vName
+			if vCode not in data:
+				data[vCode] = {}
+				if 'nets' not in data[vCode]:
+					data[vCode]['nets'] = []
+				var_struct = {
+					'name': vFullName,
+					'hier': vPath,
+				}
+				if var_struct not in data[vCode]['nets']:
+					data[vCode]['nets'].append(var_struct)
+
+		elif "$scope" in line:
+			hier.append(line.split()[2])
+		elif "$upscope" in line:
+			hier.pop()
+		elif line.startswith(('0', '1', 'x', 'z', 'b', 'r','X', 'Z')):
+			if line.startswith(('0', '1', 'x', 'z', 'X', 'Z')):
+				m = re_1b_val.match(line)
+			elif line.startswith(('b', 'r')):
+				m = re_Nb_val.match(line)
+			value = m.group(1)
+			code = m.group(2)
+			
+			if (code in data):		
+				data[code]['count'] = value
+	
+	fh.close()
+	return data
+
+def genRCFile(data):
+	sortDict = {}
+	rc = []
+	for each in data:
+		if 'count'  in data[each]:
+			sortDict[each] = data[each]['count']
+		else:
+			sortDict[each] = 0
+	ot = sorted(sortDict.items(), key=lambda (k,v): v, reverse = True)
+	for each in ot:
+		co = each[0]
+
+		if 'nets' in data[co]:
+			size = data[co]['nets'][0]['length']
+			if size!='1':
+				st = "addSignal -h 15 -UNSIGNED -HEX  %s"%(data[co]['nets'][0]['FullName'])
+			else:
+				st = "addSignal -h 15 %s"%(data[co]['nets'][0]['FullName'])
+			rc.append(st)
+	return rc
+
+def compare(v1, v2):
+	wf = []
+	d1 = {}
+	d2 = {}
+	both = []
+	data_v1 = parse_vcd_without_rename(v1)
+	data_v2 = parse_vcd_without_rename(v2)
+	st = []
+	for code in data_v1:
+		if 'count' in data_v1[code]:
+			to1 = data_v1[code]['count']
+			if 'name' in data_v1[code]['nets'][0]:
+				n1 = data_v1[code]['nets'][0]['name']
+				d1[n1] = to1
+	for corresp in data_v2:
+		if 'count'in data_v2[corresp]:
+			to2 = data_v2[corresp]['count']
+			if 'name' in data_v2[corresp]['nets'][0]:
+				n2 = data_v2[corresp]['nets'][0]['name']
+				d2[n2] = to2
+
+	for i in d1:
+		if i in d2:
+			first = int(d1[i],2)
+			second = int(d2[i],2)
+			difference = second - first
+		else:
+			first = int(d1[i],2)
+			second = '-'
+			difference = first
+		if difference != 0:
+			if difference>0:
+				st = ['%s:\n'%i,'%s: %s\n'%(v1,first),'%s: %s\n'%(v2,second),'Difference: +', '%s'%difference]
+			else:
+				difference *= -1
+				st = ['%s:\n'%i,'%s: %s\n'%(v1,first),'%s: %s\n'%(v2,second),'Difference: -', '%s'%difference]
+			both.append(st)
+	for j in d2:
+		if j not in d1:
+			first = '-'
+			second = int(d2[j],2)
+			difference = second
+			if difference != 0:
+				st = ['%s:\n'%j,'%s: %s\n'%(v1,first),'%s: %s\n'%(v2,second),'Difference: +', '%s'%difference]
+				both.append(st)
+	wf = sorted(both, key=  lambda x: int(x[4]),reverse=True)
+	return wf
+
+
 def main():
-	vcd_file, start_time, end_time = sys.argv[1], sys.argv[2], sys.argv[3]
 
-	vcd, write_file = parse_vcd(vcd_file, start_time, end_time)		# vcd = record all time's signals
-	for p in write_file:
-		print p
-	f = open('t1.vcd','w')
+	parser = argparse.ArgumentParser(description='myVCDParser')
+	parser.add_argument('-g', nargs=3, action='store', dest='gen_file', help='Dump two new vcd files, one is including renaming, another one is not including.')
+	parser.add_argument('-d', nargs=2, action='store', dest='comp_file', help='Compare two vcd files.')
+	parser.add_argument('-rc', action='store_true', dest='bool_rc', default=False, help='Generate a rc file about signals.Work with [-d].')
+	args = parser.parse_args()
+	if (args.gen_file==None and args.comp_file==None) :
+		print parser.print_help()
+		return 
+	if args.gen_file!=None:
+		vcd_file, start_time, end_time = args.gen_file[0], args.gen_file[1], args.gen_file[2]
+		vcd, genWrite = parse_vcd(vcd_file, start_time, end_time)		# vcd = record all time's signals
+		genf = open('t1.vcd','w')
+		for each in genWrite:
+			genf.write("%s\n"%each)
+		genf.close()
 
-	for each in write_file:
-		f.write("%s\n"%each)
+		if args.bool_rc:
+			rc = genRCFile(vcd)
+			genRC = open('t1.rc','w')
+			for each in rc:
+				genRC.write("%s\n"%each)
+			genRC.close()
+	elif args.comp_file!=None:
+		vcd_file_1, vcd_file_2 = args.comp_file[0], args.comp_file[1]
+		compWrite = compare(vcd_file_1, vcd_file_2)
+		compf = open('diff.txt','w')
+		for i in compWrite:
+			for j in i:
+				compf.write("%s"%j)
+			compf.write("\n\n")
+	return 
 
 if __name__ == "__main__":
 	main()
