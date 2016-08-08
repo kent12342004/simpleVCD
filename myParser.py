@@ -172,8 +172,21 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff):
 				}
 				if var_struct not in data[vCode]['nets']:
 					data[vCode]['nets'].append(var_struct)
+			else:
+				var_struct = {
+					'type': vType,
+					'shortName': shortName,
+					'length': vLength,
+					'name': vName,
+					'size': vSize,
+					'hier': vPath,
+					'FullName': vFullName,
+				}
+				if var_struct not in data[vCode]['nets']:
+					data[vCode]['nets'].append(var_struct)
 			if 'clk' in str(vName) or 'reset' in str(vName):	# save clk and reset
 				safeList.append(vCode)
+
 			temp = "$var %s\t  %s %s\t%s  $end"%(vType, vSize, vCode, str(vName))
 			write_file.append(temp)
 
@@ -285,6 +298,8 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff):
 		i = 0
 		while(i<len(write_file)):
 			statement = write_file[i]
+			if 'force_valid' in statement:
+				print statement
 			if statement.startswith('$var'):
 				l = statement.split()
 				code = l[3]
@@ -308,18 +323,17 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff):
 						data[newCode] = {'count':0, 'size':0}
 						if data[code]['nets'][0]['length']!='1':
 							write_file[i] = '$var %s\t  %s %s\t%s [%s:%s]  $end'%(l[1],l[2],newCode,l[4],endBit,startBit)
-						#else:
-						#	write_file[i] = '$var %s\t  %s %s\t%s  $end'%(l[1],l[2],newCode,l[4])
 						newType = data[code]['nets'][0]['type']
 						newSize = data[code]['nets'][0]['size']
 					
-						newName = data[code]['nets'][0]['shortName'] + '_%s__%s'%(endBit, startBit) + ' [31:0]'
+						newName = l[4] + '_%s__%s'%(endBit, startBit) + ' [31:0]'
 						string = '$var %s\t  32 %s\t%s  $end'%(newType, code, newName)
 						data[code]['replace'] = True
 						write_file.insert(i+1,string)
 						i = i + 1
 					elif int(size)<=2:
-						newName = data[code]['nets'][0]['shortName'] + ' [31:0]'
+						
+						newName = l[4] + ' [31:0]'
 						write_file[i] = '$var %s\t  32 %s\t%s  $end'%(l[1],code,newName)
 						data[code]['replace'] = True
 					
