@@ -54,6 +54,7 @@ def toggle_count(a, b):
 	extend = 0
 	la = len(a)
 	lb = len(b)
+	
 	if la is not lb:
 		if la > lb:
 			extend = la - lb
@@ -102,7 +103,7 @@ def cal_t(l, st, end):
 		end = str(temp)
 	st = int(st)
 	end = int(end)
-	return str(st), str(end)
+	return str(st), str(end), unit
 
 '''
 vcd file parsing
@@ -130,8 +131,6 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 	checkVars = False
 	startWrite = False
 	safeList = []	# store clk, reset
-	changeList = []	# extend to 32
-	sortDict = {}	# used to sort in dict
 	ifWrite = True
 	nameGroup = vcd_file.split('.')
 	#######################################
@@ -158,20 +157,28 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 					st += line
 					if '$end' in line:
 						break
-			start_time, end_time = cal_t(st, start_time, end_time)
+			start_time, end_time, time_unit = cal_t(st, start_time, end_time)
 			et = 0
+			ignore = False
 			for line in reversed(open(vcd_file).readlines()):
+				if line.startswith('$dumpoff'):
+					ignore = True
 				if line.startswith('#'):
 					l = re.match("^#(\d+)",line)
 					et = l.group(1)
 					break
-			if float(et)<=float(start_time) or float(et)<float(end_time):
-				print "Time range error."
+			if ignore is True:
+				et = int(et)-1
+			if int(et)<=int(start_time):
+				print "Time range error. Is your start_time valid?"
+				sys.exit(-1)
+			elif int(et)<int(end_time):
+				print "Time range error. Is your end_time valid?"
 				sys.exit(-1)
 			write_file.append(st)
 		elif "$dumpvars" in line:
 			write_file.append(line)
-			checkVars = True
+			checkVars = True			# check initial or not
 		elif "$scope" in line:
 			write_file.append(line)
 			hier.append(line.split()[2])	# take the name of scope	
@@ -179,6 +186,10 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 			write_file.append(line)
 			hier.pop()	# pop the scope
 		elif "$var" in line:
+		
+		#$var reg      32 #    a [31:0] $end
+		#$var reg 1 * data $end
+		
 			ls = line.split()						# assume all on one line
 			vType = ls[1]				# type		#	$var reg 1 * data $end
 			vSize = ls[2]				# size		#	$var wire 4 ( addr [3:0] $end
@@ -196,6 +207,7 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 				data[vCode] = {}
 				if 'nets' not in data[vCode]:
 					data[vCode]['nets'] = []
+					
 			var_struct = {
 				'type': vType,
 				'shortName': shortName,
@@ -223,6 +235,10 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 				write_file.append(line)			# needs to record #0
 
 		elif line.startswith(('0', '1', 'x', 'z', 'b', 'r','X', 'Z')):
+		
+			#1"
+			#bx #
+			
 			if line.startswith(('0', '1', 'x', 'z', 'X', 'Z')):
 				m = re_1b_val.match(line)
 			elif line.startswith(('b', 'r')):
@@ -234,19 +250,13 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 			
 			# for correct initial
 			if checkVars:
-				'''
-				if code in changeList:
-					p = "b"+ value + " " + code
-					write_file.append(p)
-				else:
-				'''
 				write_file.append(line)
 
 			if (code in data):					# record time and value (once a time)
 				if 'tv' not in data[code]:
 					data[code]['tv'] = []
 				if 'index' not in data[code]:
-					data[code]['index'] = -1
+					data[code]['index'] = -1	# list size counter
 				if 'count' not in data[code]:
 					data[code]['count'] = 0
 				data[code]['replace'] = False
@@ -277,7 +287,7 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 		if int(threshold)>0:
 			thr = open(nameGroup[0]+'_threshold.txt','w')
 		for code in data:
-			if code in safeList:
+			if code in safeList:			# clk must toggle at least once for verdi
 				t = (int(end_time))/2 + 1
 				clk = code
 				s = "0%s"%clk
@@ -286,7 +296,8 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 				if 'count' in data[code]:
 					ltv = len(data[code]['tv'])
 					for i in xrange(ltv):			# counter
-						if int(data[code]['tv'][i][0])>=int(start_time)  and i>=1:
+													# start time ( including the state before)
+						if int(data[code]['tv'][i][0])>=int(start_time)  and i>=1:     
 							a = data[code]['tv'][i][1]
 							b = data[code]['tv'][i-1][1]
 							if str(a)!="x" and str(b)!="x":
@@ -296,6 +307,7 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 									break
 					binCount = count_length((data[code]['count']))
 					s = "b%s %s"%(binCount, code)
+					write_file.append(s)
 					searchS = searchstring
 					if searchS != '':
 						tempGroup = searchS.split('/')
@@ -303,7 +315,7 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 							for each in data[code]['nets']:
 								eachName = each['shortName']
 								eachFullName = each['FullName']
-								if eachName.startswith(searchS) and int(data[code]['count'])>=int(threshold):
+								if searchS in eachFullName and int(data[code]['count'])>=int(threshold):
 									print "%s\nCount: %s"%(eachFullName, data[code]['count'])
 						else:
 							for each in data[code]['nets']:
@@ -317,7 +329,6 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 								s = "%s\nCount: %s\n"%(each['FullName'], data[code]['count'])
 								thr.write("%s\n"%(s))
 
-					write_file.append(s)
 		if int(threshold)>0:
 			thr.close()
 
@@ -333,7 +344,7 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 		if doDiff is True:
 			return data, write_file
 		
-		# SIGNALS RENAMING IN THE WRITTEN FILE
+		# SIGNALS RENAMING IN THE WRITE FILE LIST
 		i = 0
 		checkVars = False
 		while(i<len(write_file)):
@@ -345,6 +356,7 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 				size = int(l[2])
 				size = 2**size-1
 				count = int(data[code]['count'])
+				
 				if int(count)>int(size):
 					R = ''.join(l[5:-1])
 					if l[5] != '$end':
@@ -380,21 +392,23 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 						endBit = b[0]
 					else:
 						startBit = '0'
-						endBit = '1'
-
-					if int(size)>2 or startBit is not'0' :
+						#endBit = '1'
+					
+					if int(size)>2 or  startBit != '0' :
 						newCode = getNewCode(**data)
 						data[newCode] = {'count':0, 'size':0}
 						newType = l[1]
 						newSize = l[2]
+						
+						# Replace the symbol of short signal
 						if L is not None and L.group(2) is not None and L.group(1) is not None:
 							write_file[i] = '$var %s\t  %s %s %s %s[%s:%s]  $end'%(l[1],l[2],newCode,l[4],L.group(1),endBit,startBit)
 							newName = l[4] + '_%s__%s '%(endBit,startBit) + L.group(1) + '[31:0]'
 						else:
 							write_file[i] = '$var %s\t  %s %s %s [%s:%s]  $end'%(l[1],l[2],newCode,l[4],endBit,startBit)
-					
 							newName = l[4] + '_%s__%s'%(endBit, startBit) + ' [31:0]'
-						string = '$var %s\t  32 %s %s  $end'%(newType, code, newName)
+							
+						string = '$var %s\t  32 %s %s  $end'%(newType, code, newName)	# Replace 
 						for j in data[code]['nets']:				# update N bits data structure
 							if j['shortName']==l[4]:
 								j['size'] = 32
@@ -405,7 +419,10 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 								break
 						write_file.insert(i+1,string)
 						i = i + 1
-					elif int(size)<=2:
+					
+
+					# single bit
+					elif int(size)<=1:
 						newName = ' '.join([l[4],'[31:0]'])
 						#newName = l[4] + ' [31:0]'
 						write_file[i] = '$var %s\t  32 %s %s  $end'%(l[1],code,newName)
@@ -417,6 +434,8 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 								break
 			elif '$dumpvars' in statement:
 				checkVars = True		# begin initialize
+				
+			# only consider single bit's initialize which startswith 
 			elif statement.startswith(('x','X','0','1','z','Z')):
 				if checkVars is True:
 					rep = re_1b_val.match(statement)
@@ -428,6 +447,7 @@ def parse_vcd(vcd_file, start_time, end_time, doDiff, mod, ex, threshold, search
 			elif '$end' in statement:
 				if checkVars is True:	# initialize done
 					checkVars = False
+					break
 			i = i + 1
 		###########################################################################################
 
@@ -485,14 +505,16 @@ def genRCFile(data, mod, ex):
 			size = data[co]['nets'][0]['length']
 			i = 0
 			while i < len(data[co]['nets']):
-				h = data[co]['nets'][i]['hier']
-				n = data[co]['nets'][i]['name_2']
-				if size!='1':
-					st = "addSignal -h 15 -UNSIGNED -HEX  %s"%('/'.join([h,n]))
-				else:
-					st = "addSignal -h 15 %s"%('/'.join([h,n]))
-				rc.append(st)
+				if mod in data[co]['nets'][i]['hier']:
+					h = data[co]['nets'][i]['hier']
+					n = data[co]['nets'][i]['name_2']
+					if size!='1':
+						st = "addSignal -h 15 -UNSIGNED -HEX  %s"%('/'.join([h,n]))
+					else:
+						st = "addSignal -h 15 %s"%('/'.join([h,n]))
+					rc.append(st)
 				i+=1
+
 	return rc
 
 '''
@@ -570,18 +592,16 @@ Main function
 	for command line option
 '''
 def main():
-	t = time.clock()
 
-	msg = "myParser.py [-h] [-d vcd_file_1 vcd_file_2]\n\t\t\t|[vcd_file] \n\t\t\t--time (start_time) (end_time) \n\t\t\t[--module (module_name)] [--exclude] \n\t\t\t[--boundary] \n\t\t\t[--start] \n\t\t\t[--fit]"
+	msg = "myParser.py [-h] [-d vcd_file_1 vcd_file_2]\n\t\t\t|[vcd_file] \n\t\t\t-t (start_time) (end_time) \n\t\t\t[-m (module_name)] [-e] \n\t\t\t[-b] \n\t\t\t[-s]"
 	parser = argparse.ArgumentParser(description='myVCDParser Script ver_0.1', usage=msg)
 	parser.add_argument('vcd', nargs='?', action='store', help='The vcd file you want to parse.')
 	parser.add_argument('-d', nargs=2, action='store', dest='comp_file', help='Compare two vcd files. NOTE: rc file will not be generated.', metavar=('vcdfile_1','vcd_file_2'))
 	parser.add_argument('-t', nargs=2, action='store', dest='t', help='The start time and the end time. (unit: ns)', required=True, metavar=('start_time','end_time'))
-	parser.add_argument('-m', nargs='?', action='store', dest='mod', help='Show all signals under this hierarchy including all hierarchy.', metavar=('module'))
-	parser.add_argument('-e', action='store_true',  help='Show all signals under only this hierarchy. Use with -module')
+	parser.add_argument('-m', nargs='?', action='store', dest='mod', help='Show all signals under this hierarchy including all hierarchy, and the module name can either include hierarchy or not without [-e].', metavar=('module'))
+	parser.add_argument('-e', action='store_true',  help='Show all signals under only this hierarchy. Use with -module, and the module name must include hierarchy.')
 	parser.add_argument('-b', nargs='?', action='store', dest='min', help='Show only the signals larger than this value. NOTE: A txt file will be generated.', metavar=('threshold'))
 	parser.add_argument('-s', nargs='?', action='store', dest='searchstring', help='Show only the name of signals begin with string you input. NOTE: vcd file and rc file will not be generated.', metavar=('string'))
-
 
 	args = parser.parse_args()
 
@@ -595,11 +615,11 @@ def main():
 			exclude = args.e
 	elif args.mod is None:
 		module = ''
-		if args.e is None :
-			parser.error("--exclude can't be used without --module")
+		if args.e is  True :
+			print args.e
+			parser.error("-exclude can't be used without -module")
 			return
 		exclude = False
-	
 	if args.searchstring!=None:
 		searchstring = args.searchstring
 		tempGroup = searchstring.split('/')
